@@ -101,25 +101,31 @@ NS_INLINE BOOL StringsMatchExceptLineBreaks(NSString *expected, NSString *actual
 {
     return [self accessibilityElementMatchingBlock:^(UIAccessibilityElement *element) {
         
-        // TODO: This is a temporary fix for an SDK defect.
-        NSString *accessibilityValue = nil;
-        @try {
-            accessibilityValue = element.accessibilityValue;
-        }
-        @catch (NSException *exception) {
-            NSLog(@"KIF: Unable to access accessibilityValue for element %@ because of exception: %@", element, exception.reason);
-        }
+        return [UIView accessibilityElement:element hasLabel:label accessibilityValue:value traits:traits];
         
-        if ([accessibilityValue isKindOfClass:[NSAttributedString class]]) {
-            accessibilityValue = [(NSAttributedString *)accessibilityValue string];
-        }
-        
-        BOOL labelsMatch = StringsMatchExceptLineBreaks(label, element.accessibilityLabel);
-        BOOL traitsMatch = ((element.accessibilityTraits) & traits) == traits;
-        BOOL valuesMatch = !value || [value isEqual:accessibilityValue];
-
-        return (BOOL)(labelsMatch && traitsMatch && valuesMatch);
     }];
+}
+
++ (BOOL)accessibilityElement:(UIAccessibilityElement *)element hasLabel:(NSString *)label accessibilityValue:(NSString *)value traits:(UIAccessibilityTraits)traits
+{
+    // TODO: This is a temporary fix for an SDK defect.
+    NSString *accessibilityValue = nil;
+    @try {
+        accessibilityValue = element.accessibilityValue;
+    }
+    @catch (NSException *exception) {
+        NSLog(@"KIF: Unable to access accessibilityValue for element %@ because of exception: %@", element, exception.reason);
+    }
+    
+    if ([accessibilityValue isKindOfClass:[NSAttributedString class]]) {
+        accessibilityValue = [(NSAttributedString *)accessibilityValue string];
+    }
+    
+    BOOL labelsMatch = StringsMatchExceptLineBreaks(label, element.accessibilityLabel);
+    BOOL traitsMatch = ((element.accessibilityTraits) & traits) == traits;
+    BOOL valuesMatch = !value || [value isEqual:accessibilityValue];
+    
+    return (BOOL)(labelsMatch && traitsMatch && valuesMatch);
 }
 
 - (UIAccessibilityElement *)accessibilityElementMatchingBlock:(BOOL(^)(UIAccessibilityElement *))matchBlock;
@@ -189,7 +195,13 @@ NS_INLINE BOOL StringsMatchExceptLineBreaks(NSString *expected, NSString *actual
                 continue;
             }
         }
-        
+
+        // Avoid crash within accessibilityElementCount while traversing map subviews
+        // See https://github.com/kif-framework/KIF/issues/802
+        if ([element isKindOfClass:NSClassFromString(@"MKBasicMapView")]) {
+            continue;
+        }
+
         // If the view is an accessibility container, and we didn't find a matching subview,
         // then check the actual accessibility elements
         NSInteger accessibilityElementCount = element.accessibilityElementCount;
@@ -741,6 +753,20 @@ NS_INLINE BOOL StringsMatchExceptLineBreaks(NSString *expected, NSString *actual
         }
         if (button && button.userInteractionEnabled) {
             isUserInteractionEnabled = YES;
+        }
+    }
+    
+    // Somtimes views are inside a UIControl and don't have user interaction enabled.
+    // Walk up the hierarchary evaluating the parent UIControl subclass and use that instead.
+    if (!isUserInteractionEnabled && [self.superview isKindOfClass:[UIControl class]]) {
+        // If this view is inside a UIControl, and it is enabled, then consider the view enabled
+        UIControl *control = (UIControl *)[self superview];
+        while (control && [control isKindOfClass:[UIControl class]]) {
+            if (control.isUserInteractionEnabled) {
+                isUserInteractionEnabled = YES;
+                break;
+            }
+            control = (UIControl *)[control superview];
         }
     }
     
